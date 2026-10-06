@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boîte de réception — ShopCrypt</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html">Boutique</a>
+      <a href="keys.html">Mes clés</a>
+      <a href="write.html">Écrire</a>
+      <a href="inbox.html" aria-current="page">Boîte de réception</a>
+      <a href="demo-rsa.html">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>Boîte de réception</h1>
+    <p class="intro">
+      Vos messages arrivent <strong>chiffrés</strong> : le serveur ne peut pas les lire.
+      Cliquez sur « Déchiffrer » : votre navigateur utilise votre <strong>clé privée</strong>
+      pour retrouver le texte clair.
+    </p>
+
+    <p id="message" class="alert" role="status" hidden></p>
+
+    <!-- Bandeau affiché quand aucune clé privée n'est chargée dans l'onglet -->
+    <section id="key-loader" class="card card-highlight" hidden>
+      <h2>Chargez votre clé privée pour lire vos messages</h2>
+      <p>Choisissez votre fichier <code>cle-privee.pem</code>. Il est lu localement,
+         dans votre navigateur : il n’est jamais envoyé au serveur.</p>
+      <input id="file-pem" type="file" accept=".pem">
+    </section>
+
+    <p id="key-status" class="muted"></p>
+
+    <div class="toolbar">
+      <button id="btn-refresh" type="button" class="btn btn-secondary">Actualiser</button>
+      <button id="btn-decrypt-all" type="button" class="btn btn-secondary">Tout déchiffrer</button>
+    </div>
+
+    <!-- Les cartes des messages sont ajoutées ici par le script -->
+    <div id="inbox" class="inbox"></div>
+  </main>
+
+  <script type="module">
+    import { requireLogin, initNav, getInbox } from './js/api.js';
+    import {
+      decryptMessage, getRememberedPrivateKey, rememberPrivateKey, forgetPrivateKey,
+    } from './js/crypto.js';
+
+    const user = requireLogin();
+    initNav();
+
+    const $ = (id) => document.getElementById(id);
+    const messageZone = $('message');
+    const inbox = $('inbox');
+
+    // Fonctions de déchiffrement des cartes (pour "Tout déchiffrer").
+    let decryptors = [];
+
+    function showMessage(text, type) {
+      messageZone.textContent = text; // anti-XSS
+      messageZone.className = `alert alert-${type}`;
+      messageZone.hidden = false;
+    }
+
+    // Petit outil : crée un élément avec une classe et un TEXTE.
+    // SÉCURITÉ : on n'utilise que textContent. Même si un pseudo ou un
+    // message déchiffré contient "<script>", il s'affiche comme du texte.
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    // Affiche ou masque le bandeau "chargez votre clé".
+    async function refreshKeyStatus() {
+      const key = await getRememberedPrivateKey();
+      $('key-loader').hidden = Boolean(key);
+      $('key-status').textContent = key
+        ? '🔑 Clé privée chargée dans cet onglet.'
+        : '';
+      return key;
+    }
+
+    // Renvoie la clé privée, ou affiche le bandeau pour la demander.
+    async function requirePrivateKey() {
+      const key = await refreshKeyStatus();
+      if (!key) {
+        showMessage('Chargez d’abord votre fichier cle-privee.pem (ci-dessus).', 'warning');
+        $('key-loader').scrollIntoView({ behavior: 'smooth' });
+      }
+      return key;
+    }
+
+    // Construit la carte d'un message.
+    function buildCard(m) {
+      const card = el('article', 'card message-card');
+
+      const header = el('div', 'message-head');
+      header.append(
+        el('strong', '', `De : ${m.sender_username}`),
+        el('span', 'muted', new Date(m.created_at).toLocaleString('fr-FR'))
+      );
+
+      // Le chiffré tel qu'il est stocké en base (base64, 344 caractères).
+      const cipherLabel = el('p', 'label', 'Message chiffré (base64) :');
+      const cipher = el('p', 'mono cipher', m.ciphertext);
+
+      // Zone où apparaîtra le texte clair.
+      const plain = el('p', 'plaintext');
+      plain.hidden = true;
+
+      const error = el('p', 'alert alert-error');
+      error.hidden = true;
+
+      const button = el('button', 'btn', 'Déchiffrer');
+      button.type = 'button';
+
+      async function decrypt() {
+        const key = await requirePrivateKey();
+        if (!key) return;
+        error.hidden = true;
+        try {
+          // CRYPTO : RSA-OAEP avec la clé PRIVÉE, entièrement dans le navigateur.
+          const text = await decryptMessage(key, m.ciphertext);
+          plain.textContent = text; // textContent : anti-XSS
+          plain.hidden = false;
+          button.hidden = true;
+          card.classList.add('decrypted');
+        } catch (err) {
+          // Mauvaise clé : la vérification OAEP échoue => message clair à l'écran.
+          error.textContent = `❌ ${err.message} Ce message a été chiffré pour une autre clé `
+            + '(avez-vous régénéré vos clés ?). Chargez le bon fichier .pem.';
+          error.hidden = false;
+        }
+      }
+
+      button.addEventListener('click', decrypt);
+      decryptors.push(decrypt);
+
+      card.append(header, cipherLabel, cipher, button, plain, error);
+      return card;
+    }
+
+    // Charge la liste des messages depuis l'API.
+    async function loadInbox() {
+      inbox.textContent = '';
+      decryptors = [];
+      try {
+        const messages = await getInbox();
+        if (messages.length === 0) {
+          inbox.append(el('p', 'muted', 'Aucun message pour le moment.'));
+          return;
+        }
+        for (const m of messages) inbox.append(buildCard(m));
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+    }
+
+    // ------------------ Chargement du fichier .pem ------------------
+    $('file-pem').addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const pem = await file.text(); // lecture locale, aucun envoi
+        await rememberPrivateKey(pem);
+        await refreshKeyStatus();
+        showMessage('Clé privée chargée ✅ Cliquez sur « Déchiffrer ».', 'success');
+      } catch (err) {
+        forgetPrivateKey();
+        showMessage(err.message, 'error');
+      } finally {
+        event.target.value = '';
+      }
+    });
+
+    $('btn-refresh').addEventListener('click', loadInbox);
+    $('btn-decrypt-all').addEventListener('click', async () => {
+      if (!(await requirePrivateKey())) return;
+      for (const decrypt of decryptors) await decrypt();
+    });
+
+    // ------------------ Au chargement ------------------
+    if (user) {
+      await refreshKeyStatus();
+      await loadInbox();
+    }
+  </script>
+</body>
+</html>
