@@ -1,0 +1,9 @@
+# Fichiers que "vercel deploy" ne doit JAMAIS envoyer.
+# SÉCURITÉ : les fichiers à la racine sont servis publiquement ;
+# un .env envoyé deviendrait lisible à l'adresse /.env !
+.env
+.env.*
+!.env.example
+*.pem
+node_modules
+.git
