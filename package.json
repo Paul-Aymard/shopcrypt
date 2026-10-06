@@ -4,9 +4,6 @@
   "description": "TP de cryptographie : messagerie chiffrée RSA-OAEP (Web Crypto API) habillée en mini-boutique",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "vercel dev"
-  },
   "engines": {
     "node": ">=20"
   },

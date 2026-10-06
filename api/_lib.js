@@ -10,6 +10,7 @@
 //   - signToken()   : fabrique un jeton JWT après connexion
 //   - requireUser() : vérifie le JWT et renvoie l'utilisateur connecté
 //   - sendError()   : renvoie une erreur JSON claire
+//   - getBody()     : lit le corps JSON de la requête sans planter
 //   - allowMethods(): refuse les méthodes HTTP non prévues
 // =====================================================================
 
@@ -29,7 +30,7 @@ export function getSql() {
     // vient d'une variable d'environnement, jamais du code source.
     const url = process.env.DATABASE_URL;
     if (!url) {
-      throw new Error('DATABASE_URL manquante : lancez "vercel env pull .env.local".');
+      throw new Error('DATABASE_URL manquante : remplissez le fichier .env (modèle : .env.example).');
     }
     // neon() renvoie une fonction "sql" utilisable ainsi :
     //   await sql`SELECT * FROM users WHERE id = ${id}`
@@ -138,6 +139,29 @@ export async function requireUser(req, res) {
 //   500 = erreur interne du serveur
 export function sendError(res, status, message) {
   res.status(status).json({ error: message });
+}
+
+// ---------------------------------------------------------------------
+// Lecture du corps JSON de la requête
+// ---------------------------------------------------------------------
+// Vercel transforme automatiquement le JSON reçu en objet (req.body).
+// Mais si le JSON est mal écrit, la lecture de req.body lève une erreur.
+// Cette fonction renvoie toujours un objet ({} en cas de problème),
+// ou null si le JSON est invalide (la route renverra alors une 400).
+export function getBody(req) {
+  try {
+    const body = req.body;
+    // Corps vide : on renvoie un objet vide.
+    if (body === undefined || body === null || body === '') return {};
+    // Certains clients envoient le JSON sans l'en-tête Content-Type :
+    // Vercel le laisse alors sous forme de texte, on le convertit.
+    if (typeof body === 'string') return JSON.parse(body);
+    // Cas normal : déjà un objet.
+    if (typeof body === 'object') return body;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------
