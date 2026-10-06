@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShopCrypt — la boutique aux messages confidentiels</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html" aria-current="page">Boutique</a>
+      <a href="keys.html">Mes clés</a>
+      <a href="write.html">Écrire</a>
+      <a href="inbox.html">Boîte de réception</a>
+      <a href="demo-rsa.html">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <!-- ===================== Présentation ===================== -->
+    <section class="hero">
+      <h1>La boutique où vos messages restent secrets</h1>
+      <p>
+        Sur ShopCrypt, le vendeur et le client échangent des informations confidentielles
+        (code de retrait, adresse, détails de commande) <strong>chiffrées avec RSA</strong>,
+        directement dans le navigateur. Même notre serveur ne peut pas les lire.
+      </p>
+      <div class="steps">
+        <div class="step"><span>1</span>Créez un compte et générez vos clés</div>
+        <div class="step"><span>2</span>Écrivez : le message est chiffré avec la clé publique du destinataire</div>
+        <div class="step"><span>3</span>Le destinataire déchiffre avec sa clé privée</div>
+      </div>
+      <a href="login.html" class="btn">Commencer</a>
+      <a href="demo-rsa.html" class="btn btn-secondary">Comprendre RSA</a>
+    </section>
+
+    <!-- ===================== Catalogue (produits fictifs) ===================== -->
+    <h2>Notre catalogue</h2>
+    <div id="catalog" class="catalog"></div>
+  </main>
+
+  <footer class="footer">
+    TP de cryptographie — Master 1 · RSA-OAEP 2048 bits · Web Crypto API · Vercel + Neon
+  </footer>
+
+  <script type="module">
+    import { initNav } from './js/api.js';
+    initNav();
+
+    // Produits FICTIFS (aucun paiement : la boutique n'est qu'un habillage).
+    const products = [
+      { emoji: '🧵', name: 'Pagne wax premium (6 yards)', price: 15000 },
+      { emoji: '👜', name: 'Sac en cuir artisanal', price: 25000 },
+      { emoji: '👡', name: 'Sandales en cuir tressé', price: 12000 },
+      { emoji: '☕', name: 'Café de Man moulu (500 g)', price: 4500 },
+      { emoji: '🍫', name: 'Chocolat noir 70 % cacao ivoirien', price: 2500 },
+      { emoji: '🎧', name: 'Écouteurs sans fil', price: 18000 },
+    ];
+
+    // Formate un prix : 15000 -> "15 000 FCFA".
+    const formatPrice = (n) => `${n.toLocaleString('fr-FR')} FCFA`;
+
+    const catalog = document.getElementById('catalog');
+    for (const p of products) {
+      const card = document.createElement('article');
+      card.className = 'card product';
+
+      const img = document.createElement('div');
+      img.className = 'product-img';
+      img.textContent = p.emoji;
+
+      const name = document.createElement('h3');
+      name.textContent = p.name;
+
+      const price = document.createElement('p');
+      price.className = 'price';
+      price.textContent = formatPrice(p.price);
+
+      const link = document.createElement('a');
+      link.className = 'btn';
+      link.href = 'write.html';
+      link.textContent = 'Contacter le vendeur 🔒';
+
+      card.append(img, name, price, link);
+      catalog.append(card);
+    }
+  </script>
+</body>
+</html>
