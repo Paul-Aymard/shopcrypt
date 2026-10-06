@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Démo RSA à la main — ShopCrypt</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html">Boutique</a>
+      <a href="keys.html">Mes clés</a>
+      <a href="write.html">Écrire</a>
+      <a href="inbox.html">Boîte de réception</a>
+      <a href="demo-rsa.html" aria-current="page">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>RSA expliqué pas à pas (codé à la main)</h1>
+    <p class="intro">
+      Cette page refait RSA « à la main » avec de <strong>petits nombres</strong> et le type
+      <code>BigInt</code> de JavaScript (entiers de taille illimitée). Chaque valeur
+      intermédiaire est affichée. <strong>À but pédagogique uniquement</strong> : le vrai site
+      utilise la Web Crypto API avec des clés de 2048 bits et le remplissage OAEP.
+    </p>
+
+    <p id="message" class="alert" role="status" hidden></p>
+
+    <!-- ===================== 1. Paramètres ===================== -->
+    <section class="card">
+      <h2>1. Choisir p, q et e</h2>
+      <div class="grid-3">
+        <div>
+          <label for="in-p">p (nombre premier)</label>
+          <input id="in-p" type="number" min="2" value="61">
+        </div>
+        <div>
+          <label for="in-q">q (nombre premier, différent de p)</label>
+          <input id="in-q" type="number" min="2" value="53">
+        </div>
+        <div>
+          <label for="in-e">e (exposant public)</label>
+          <input id="in-e" type="number" min="3" value="17">
+        </div>
+      </div>
+      <button id="btn-random" type="button" class="btn btn-secondary">p et q au hasard</button>
+      <button id="btn-keys" type="button" class="btn">Calculer les clés</button>
+    </section>
+
+    <!-- ===================== 2. Calcul des clés ===================== -->
+    <section class="card" id="sec-keys" hidden>
+      <h2>2. Calcul des clés</h2>
+      <div id="out-keys"></div>
+
+      <h3>Calcul de d : algorithme d’Euclide étendu</h3>
+      <p class="muted">On cherche d tel que e × d ≡ 1 (mod φ(n)), c’est-à-dire l’inverse de e
+        modulo φ(n). L’algorithme d’Euclide étendu calcule le PGCD et, en même temps, des
+        coefficients s et t tels que s × φ(n) + t × e = PGCD.</p>
+      <div id="out-euclid" class="table-wrap"></div>
+      <div id="out-d"></div>
+    </section>
+
+    <!-- ===================== 3. Chiffrer un nombre ===================== -->
+    <section class="card" id="sec-number" hidden>
+      <h2>3. Chiffrer et déchiffrer un petit nombre</h2>
+      <label for="in-m">Message m (entier, 0 ≤ m &lt; n)</label>
+      <input id="in-m" type="number" min="0" value="65">
+      <button id="btn-number" type="button" class="btn">Chiffrer puis déchiffrer</button>
+
+      <div id="out-number"></div>
+      <h3>Exponentiation modulaire rapide (« carré et multiplication »)</h3>
+      <p class="muted">Calculer m<sup>e</sup> directement donnerait un nombre gigantesque. On lit
+        l’exposant en binaire, de droite à gauche : à chaque bit on élève la base au carré
+        (mod n), et quand le bit vaut 1 on multiplie le résultat par la base (mod n).</p>
+      <h4>Chiffrement : c = m<sup>e</sup> mod n</h4>
+      <div id="out-pow-enc" class="table-wrap"></div>
+      <h4>Déchiffrement : m = c<sup>d</sup> mod n</h4>
+      <div id="out-pow-dec" class="table-wrap"></div>
+    </section>
+
+    <!-- ===================== 4. Chiffrer un mot ===================== -->
+    <section class="card" id="sec-word" hidden>
+      <h2>4. Chiffrer un mot, lettre par lettre</h2>
+      <label for="in-word">Mot</label>
+      <input id="in-word" value="SHOPCRYPT" maxlength="40">
+      <button id="btn-word" type="button" class="btn">Chiffrer le mot</button>
+      <div id="out-word" class="table-wrap"></div>
+      <p id="out-word-result"></p>
+      <p class="alert alert-warning">
+        ⚠️ Remarquez que <strong>la même lettre donne toujours le même chiffré</strong> : ce RSA
+        « brut » (sans remplissage) est déterministe, et une simple analyse de fréquence des
+        lettres suffit à le casser. C’est exactement ce que corrige <strong>OAEP</strong>, qui ajoute
+        de l’aléatoire : dans ShopCrypt, le même message donne un chiffré différent à chaque fois.
+      </p>
+    </section>
+
+    <!-- ===================== 5. Casser la clé ===================== -->
+    <section class="card" id="sec-break" hidden>
+      <h2>5. Pourquoi faut-il de grandes clés ?</h2>
+      <p>La sécurité de RSA repose sur la difficulté de <strong>factoriser n</strong>, c’est-à-dire de
+        retrouver p et q à partir de n. Avec de petits nombres, c’est immédiat :</p>
+      <button id="btn-break" type="button" class="btn btn-secondary">Factoriser n (attaque)</button>
+      <div id="out-break"></div>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initNav } from './js/api.js';
+    initNav(); // la démo est accessible sans être connecté
+
+    const $ = (id) => document.getElementById(id);
+
+    // Clé courante : { p, q, n, phi, e, d } (tous en BigInt)
+    let key = null;
+
+    // ==================================================================
+    // Outils d'affichage (textContent uniquement : anti-XSS)
+    // ==================================================================
+    function showMessage(text, type) {
+      const zone = $('message');
+      zone.textContent = text;
+      zone.className = `alert alert-${type}`;
+      zone.hidden = !text;
+      if (text) zone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Ajoute une ligne "libellé : valeur" dans un conteneur.
+    function line(container, label, value, note = '') {
+      const p = document.createElement('p');
+      const b = document.createElement('strong');
+      b.textContent = `${label} `;
+      const v = document.createElement('code');
+      v.textContent = String(value);
+      p.append(b, v);
+      if (note) {
+        const s = document.createElement('span');
+        s.className = 'muted';
+        s.textContent = `  ${note}`;
+        p.append(s);
+      }
+      container.append(p);
+    }
+
+    // Construit un tableau HTML à partir d'en-têtes et de lignes.
+    function table(container, headers, rows) {
+      const t = document.createElement('table');
+      const thead = t.createTHead().insertRow();
+      for (const h of headers) {
+        const th = document.createElement('th');
+        th.textContent = h;
+        thead.append(th);
+      }
+      const tbody = t.createTBody();
+      for (const r of rows) {
+        const tr = tbody.insertRow();
+        for (const cell of r) tr.insertCell().textContent = String(cell);
+      }
+      container.append(t);
+    }
+
+    // ==================================================================
+    // Mathématiques de RSA, en BigInt
+    // (les nombres BigInt s'écrivent avec un "n" à la fin : 17n, 3233n...)
+    // ==================================================================
+
+    // Test de primalité par divisions successives : on essaie de diviser
+    // par 2, 3, 5, 7... jusqu'à √x. Suffisant pour de petits nombres.
+    function isPrime(x) {
+      if (x < 2n) return false;
+      if (x % 2n === 0n) return x === 2n;
+      for (let i = 3n; i * i <= x; i += 2n) {
+        if (x % i === 0n) return false;
+      }
+      return true;
+    }
+
+    // PGCD (plus grand commun diviseur) par l'algorithme d'Euclide.
+    function gcd(a, b) {
+      while (b !== 0n) [a, b] = [b, a % b];
+      return a;
+    }
+
+    // Euclide étendu : renvoie { g, x, y, steps } avec a·x + b·y = g = PGCD(a, b).
+    // Chaque étape garde : quotient, reste, et les coefficients s et t.
+    function extendedEuclid(a, b) {
+      let [oldR, r] = [a, b];
+      let [oldS, s] = [1n, 0n];
+      let [oldT, t] = [0n, 1n];
+      const steps = [[ '—', oldR, oldS, oldT ], [ '—', r, s, t ]];
+      while (r !== 0n) {
+        const quotient = oldR / r; // division entière en BigInt
+        [oldR, r] = [r, oldR - quotient * r];
+        [oldS, s] = [s, oldS - quotient * s];
+        [oldT, t] = [t, oldT - quotient * t];
+        steps.push([quotient, r, s, t]);
+      }
+      return { g: oldR, x: oldS, y: oldT, steps };
+    }
+
+    // Inverse modulaire : d tel que e·d ≡ 1 (mod φ).
+    // Avec a = φ et b = e : φ·s + e·t = 1, donc e·t ≡ 1 (mod φ) => d = t mod φ.
+    function modInverse(e, phi) {
+      const res = extendedEuclid(phi, e);
+      if (res.g !== 1n) return { d: null, ...res };
+      const d = ((res.y % phi) + phi) % phi; // on ramène t dans [0, φ[
+      return { d, ...res };
+    }
+
+    // Exponentiation modulaire rapide : base^exp mod mod, avec le détail
+    // de chaque étape (méthode "carré et multiplication").
+    function modPow(base, exp, mod) {
+      const steps = [];
+      let result = 1n;
+      let b = base % mod;
+      let e = exp;
+      let i = 0;
+      while (e > 0n) {
+        const bit = e & 1n; // bit de poids faible de l'exposant
+        const before = result;
+        if (bit === 1n) result = (result * b) % mod; // multiplication si le bit vaut 1
+        steps.push([i, bit, b, bit === 1n ? `${before} × ${b} mod ${mod} = ${result}` : `${result} (inchangé)`]);
+        b = (b * b) % mod; // élévation au carré de la base
+        e >>= 1n;          // on passe au bit suivant
+        i++;
+      }
+      return { result, steps };
+    }
+
+    // ==================================================================
+    // 1-2. Génération des clés
+    // ==================================================================
+    function readBig(id) {
+      const raw = $(id).value.trim();
+      if (!/^\d+$/.test(raw)) throw new Error(`Valeur invalide pour ${id.replace('in-', '')} : un entier positif est attendu.`);
+      return BigInt(raw);
+    }
+
+    function computeKeys() {
+      showMessage('', 'success');
+      const out = $('out-keys');
+      const outEuclid = $('out-euclid');
+      const outD = $('out-d');
+      out.textContent = outEuclid.textContent = outD.textContent = '';
+      key = null;
+
+      try {
+        const p = readBig('in-p');
+        const q = readBig('in-q');
+        const e = readBig('in-e');
+
+        if (p > 1000000n || q > 1000000n) throw new Error('Pour la démo, gardez p et q inférieurs à 1 000 000.');
+        if (!isPrime(p)) throw new Error(`p = ${p} n’est pas premier.`);
+        if (!isPrime(q)) throw new Error(`q = ${q} n’est pas premier.`);
+        if (p === q) throw new Error('p et q doivent être différents (sinon n = p² se factorise trivialement).');
+
+        line(out, 'p =', p, '✔ premier');
+        line(out, 'q =', q, '✔ premier');
+
+        // n = p × q : le "module", public. Sa taille est la taille de la clé.
+        const n = p * q;
+        line(out, 'n = p × q =', n, `(${n.toString(2).length} bits — ShopCrypt utilise 2048 bits)`);
+
+        // φ(n) = (p − 1)(q − 1) : indicatrice d'Euler, SECRÈTE
+        // (la connaître revient à connaître p et q).
+        const phi = (p - 1n) * (q - 1n);
+        line(out, 'φ(n) = (p − 1) × (q − 1) =', phi, 'secret');
+
+        // e doit vérifier 1 < e < φ(n) et PGCD(e, φ(n)) = 1 (sinon pas d'inverse).
+        if (e <= 1n || e >= phi) throw new Error(`e doit vérifier 1 < e < φ(n) = ${phi}.`);
+        const g = gcd(e, phi);
+        line(out, 'PGCD(e, φ(n)) =', g, g === 1n ? '✔ e et φ(n) sont premiers entre eux' : '✘');
+        if (g !== 1n) throw new Error(`PGCD(${e}, ${phi}) = ${g} ≠ 1 : choisissez un autre e (ex. 3, 5, 17, 257, 65537).`);
+        line(out, 'e =', e, 'exposant public');
+
+        // d = inverse de e modulo φ(n), par Euclide étendu.
+        const inv = modInverse(e, phi);
+        table(outEuclid, ['quotient', 'reste r', 's (coef. de φ(n))', 't (coef. de e)'], inv.steps);
+        line(outD, 'Dernier reste non nul (PGCD) =', inv.g);
+        line(outD, 'Coefficient t =', inv.y, `→ d = t mod φ(n)`);
+        line(outD, 'd =', inv.d, 'exposant privé (secret)');
+        line(outD, 'Vérification e × d mod φ(n) =', (e * inv.d) % phi, '✔ doit valoir 1');
+
+        const pub = document.createElement('p');
+        pub.className = 'alert alert-success';
+        pub.textContent = `🔓 Clé publique (e, n) = (${e}, ${n})   ·   🔑 Clé privée (d, n) = (${inv.d}, ${n})`;
+        outD.append(pub);
+
+        key = { p, q, n, phi, e, d: inv.d };
+        for (const id of ['sec-keys', 'sec-number', 'sec-word', 'sec-break']) $(id).hidden = false;
+        $('sec-keys').hidden = false;
+        $('out-number').textContent = $('out-pow-enc').textContent = $('out-pow-dec').textContent = '';
+        $('out-word').textContent = $('out-word-result').textContent = $('out-break').textContent = '';
+      } catch (err) {
+        $('sec-keys').hidden = false;
+        for (const id of ['sec-number', 'sec-word', 'sec-break']) $(id).hidden = true;
+        showMessage(err.message, 'error');
+      }
+    }
+
+    // Nombre premier au hasard entre min et max (petits nombres).
+    function randomPrime(min, max) {
+      while (true) {
+        const x = BigInt(min + Math.floor(Math.random() * (max - min)));
+        if (isPrime(x)) return x;
+      }
+    }
+
+    $('btn-random').addEventListener('click', () => {
+      const p = randomPrime(100, 1000);
+      let q;
+      do { q = randomPrime(100, 1000); } while (q === p);
+      $('in-p').value = p;
+      $('in-q').value = q;
+      $('in-e').value = 17;
+      // Si 17 ne convient pas (PGCD ≠ 1), on prend le premier e impair qui convient.
+      const phi = (p - 1n) * (q - 1n);
+      let e = 17n;
+      while (gcd(e, phi) !== 1n) e += 2n;
+      $('in-e').value = e;
+      computeKeys();
+    });
+    $('btn-keys').addEventListener('click', computeKeys);
+
+    // ==================================================================
+    // 3. Chiffrer / déchiffrer un nombre
+    // ==================================================================
+    $('btn-number').addEventListener('click', () => {
+      if (!key) return;
+      showMessage('', 'success');
+      const out = $('out-number');
+      out.textContent = $('out-pow-enc').textContent = $('out-pow-dec').textContent = '';
+      try {
+        const m = readBig('in-m');
+        if (m >= key.n) throw new Error(`m doit être strictement inférieur à n = ${key.n}.`);
+
+        // Chiffrement avec la clé PUBLIQUE : c = m^e mod n
+        const enc = modPow(m, key.e, key.n);
+        table($('out-pow-enc'), ['étape', 'bit de e', 'base (carrés successifs)', 'résultat'], enc.steps);
+
+        // Déchiffrement avec la clé PRIVÉE : m = c^d mod n
+        const dec = modPow(enc.result, key.d, key.n);
+        table($('out-pow-dec'), ['étape', 'bit de d', 'base (carrés successifs)', 'résultat'], dec.steps);
+
+        line(out, 'm =', m, 'message clair');
+        line(out, `e = ${key.e} en binaire :`, key.e.toString(2));
+        line(out, `c = m^e mod n = ${m}^${key.e} mod ${key.n} =`, enc.result, 'message chiffré');
+        line(out, `d = ${key.d} en binaire :`, key.d.toString(2));
+        line(out, `c^d mod n = ${enc.result}^${key.d} mod ${key.n} =`, dec.result,
+          dec.result === m ? '✔ on retrouve m' : '✘ erreur');
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+    });
+
+    // ==================================================================
+    // 4. Chiffrer un mot lettre par lettre
+    // ==================================================================
+    $('btn-word').addEventListener('click', () => {
+      if (!key) return;
+      showMessage('', 'success');
+      const out = $('out-word');
+      out.textContent = $('out-word-result').textContent = '';
+      const word = $('in-word').value;
+      if (!word) return showMessage('Entrez un mot.', 'error');
+
+      const rows = [];
+      let decoded = '';
+      const ciphers = [];
+      for (const letter of word) {
+        // Chaque lettre devient un nombre : son code Unicode (A = 65, B = 66...).
+        const m = BigInt(letter.codePointAt(0));
+        if (m >= key.n) {
+          return showMessage(`Le code de « ${letter} » (${m}) dépasse n = ${key.n} : prenez p et q plus grands.`, 'error');
+        }
+        const c = modPow(m, key.e, key.n).result;     // chiffrement
+        const back = modPow(c, key.d, key.n).result;  // déchiffrement
+        const backLetter = String.fromCodePoint(Number(back));
+        rows.push([letter, m, `${m}^${key.e} mod ${key.n}`, c, `${c}^${key.d} mod ${key.n}`, back, backLetter]);
+        ciphers.push(c);
+        decoded += backLetter;
+      }
+      table(out, ['lettre', 'code m', 'calcul', 'chiffré c', 'calcul inverse', 'm retrouvé', 'lettre'], rows);
+      $('out-word-result').textContent = `Chiffré : [${ciphers.join(', ')}]  →  Déchiffré : « ${decoded} »`;
+    });
+
+    // ==================================================================
+    // 5. Attaque : factoriser n
+    // ==================================================================
+    $('btn-break').addEventListener('click', () => {
+      if (!key) return;
+      const out = $('out-break');
+      out.textContent = '';
+      const start = performance.now();
+      let factor = null;
+      // Divisions successives jusqu'à √n.
+      for (let i = 2n; i * i <= key.n; i++) {
+        if (key.n % i === 0n) { factor = i; break; }
+      }
+      const ms = (performance.now() - start).toFixed(2);
+      const other = key.n / factor;
+      const phi = (factor - 1n) * (other - 1n);
+      const d = modInverse(key.e, phi).d;
+      line(out, `n = ${key.n} = `, `${factor} × ${other}`, `trouvé en ${ms} ms`);
+      line(out, 'L’attaquant recalcule φ(n) =', phi);
+      line(out, 'puis d =', d, d === key.d ? '✔ la clé privée est retrouvée !' : '');
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'Avec n de 2048 bits (617 chiffres décimaux), aucun ordinateur actuel ne sait '
+        + 'factoriser n en un temps raisonnable : c’est ce qui protège les messages de ShopCrypt.';
+      out.append(p);
+    });
+
+    // Calcul initial avec les valeurs par défaut (p = 61, q = 53, e = 17).
+    computeKeys();
+  </script>
+</body>
+</html>
