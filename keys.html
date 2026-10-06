@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mes clés — ShopCrypt</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html">Boutique</a>
+      <a href="keys.html" aria-current="page">Mes clés</a>
+      <a href="write.html">Écrire</a>
+      <a href="inbox.html">Boîte de réception</a>
+      <a href="demo-rsa.html">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>Mes clés RSA</h1>
+    <p class="intro">
+      Votre <strong>clé publique</strong> est un cadenas ouvert : vous la publiez pour que
+      les autres puissent vous écrire. Votre <strong>clé privée</strong> est la seule clé
+      qui ouvre ce cadenas : elle reste sur votre ordinateur et n’est jamais envoyée au serveur.
+    </p>
+
+    <p id="message" class="alert" role="status" hidden></p>
+
+    <!-- ===================== 1. État ===================== -->
+    <section class="card">
+      <h2>État</h2>
+      <ul class="status-list">
+        <li>Clé publique publiée sur le serveur : <strong id="status-public">…</strong></li>
+        <li>Clé privée chargée dans cet onglet : <strong id="status-private">…</strong></li>
+      </ul>
+    </section>
+
+    <!-- ===================== 2. Générer ===================== -->
+    <section class="card">
+      <h2>Générer une nouvelle paire de clés</h2>
+      <p>RSA-OAEP · 2048 bits · SHA-256 · exposant public 65537. La génération se fait
+         entièrement dans votre navigateur.</p>
+      <p id="warning-existing" class="alert alert-warning" hidden>
+        Attention : vous avez déjà une clé publiée. Si vous publiez une nouvelle clé,
+        les messages déjà reçus ne pourront plus être lus qu’avec l’ANCIEN fichier .pem.
+      </p>
+
+      <button id="btn-generate" type="button" class="btn">Générer ma paire de clés</button>
+
+      <div id="generated" hidden>
+        <label for="public-pem">Clé publique (SPKI / PEM) — elle peut être montrée à tout le monde :</label>
+        <textarea id="public-pem" rows="9" readonly class="mono"></textarea>
+
+        <p>Étape obligatoire avant de publier : téléchargez et rangez votre clé privée.</p>
+        <button id="btn-download" type="button" class="btn">1. Télécharger cle-privee.pem</button>
+        <button id="btn-publish" type="button" class="btn" disabled>2. Publier ma clé publique</button>
+      </div>
+    </section>
+
+    <!-- ===================== 3. Réimporter ===================== -->
+    <section class="card">
+      <h2>Charger ma clé privée (.pem)</h2>
+      <p>Nécessaire pour déchiffrer vos messages après une reconnexion ou sur un autre
+         ordinateur. Le fichier est lu localement : il n’est pas envoyé sur Internet.</p>
+      <label for="file-pem">Fichier cle-privee.pem :</label>
+      <input id="file-pem" type="file" accept=".pem">
+      <button id="btn-forget" type="button" class="btn btn-secondary">Oublier la clé de cet onglet</button>
+    </section>
+  </main>
+
+  <script type="module">
+    import { requireLogin, initNav, getMyPublicKey, publishKey } from './js/api.js';
+    import {
+      generateKeyPair, exportPublicKeyPem, exportPrivateKeyPem, downloadTextFile,
+      rememberPrivateKey, getRememberedPrivatePem, forgetPrivateKey, privateKeyMatchesPublic,
+    } from './js/crypto.js';
+
+    // Page réservée aux utilisateurs connectés.
+    const user = requireLogin();
+    initNav();
+
+    const $ = (id) => document.getElementById(id);
+    const messageZone = $('message');
+
+    // Clé publique actuellement publiée sur le serveur (PEM ou null).
+    let publishedPem = null;
+    // Paire générée sur cette page, en attente de publication.
+    let pending = null; // { publicPem, privatePem }
+
+    function showMessage(text, type) {
+      messageZone.textContent = text; // textContent : anti-XSS
+      messageZone.className = `alert alert-${type}`;
+      messageZone.hidden = false;
+    }
+
+    // Met à jour le bloc "État".
+    async function refreshStatus() {
+      $('status-public').textContent = publishedPem ? 'oui ✅' : 'non ❌';
+      $('warning-existing').hidden = !publishedPem;
+
+      const privatePem = getRememberedPrivatePem();
+      if (!privatePem) {
+        $('status-private').textContent = 'non ❌';
+        return;
+      }
+      // On vérifie que la clé privée chargée va bien avec la clé publiée.
+      let text = 'oui ✅';
+      if (publishedPem) {
+        const ok = await privateKeyMatchesPublic(privatePem, publishedPem);
+        text = ok ? 'oui ✅ (correspond à la clé publiée)'
+                  : 'oui ⚠️ mais elle NE correspond PAS à la clé publiée';
+      }
+      $('status-private').textContent = text;
+    }
+
+    // ------------------ Générer ------------------
+    $('btn-generate').addEventListener('click', async () => {
+      const button = $('btn-generate');
+      button.disabled = true;
+      button.textContent = 'Génération en cours…';
+      try {
+        // CRYPTO : tirage de p et q, calcul de n, φ(n) et d (dans le navigateur).
+        const pair = await generateKeyPair();
+        pending = {
+          publicPem: await exportPublicKeyPem(pair.publicKey),   // SPKI
+          privatePem: await exportPrivateKeyPem(pair.privateKey), // PKCS#8 (secret)
+        };
+        $('public-pem').value = pending.publicPem;
+        $('generated').hidden = false;
+        $('btn-publish').disabled = true; // il faut d'abord télécharger
+        showMessage('Paire générée. Téléchargez la clé privée, puis publiez la clé publique.', 'success');
+      } catch (err) {
+        showMessage(`Échec de la génération : ${err.message}`, 'error');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Générer ma paire de clés';
+      }
+    });
+
+    // ------------------ Télécharger la clé privée ------------------
+    $('btn-download').addEventListener('click', () => {
+      if (!pending) return;
+      // SÉCURITÉ : fichier créé localement, aucune requête réseau.
+      downloadTextFile('cle-privee.pem', pending.privatePem);
+      $('btn-publish').disabled = false;
+      showMessage('Clé privée téléchargée. Rangez-la en lieu sûr, puis publiez la clé publique.', 'success');
+    });
+
+    // ------------------ Publier la clé publique ------------------
+    $('btn-publish').addEventListener('click', async () => {
+      if (!pending) return;
+      $('btn-publish').disabled = true;
+      try {
+        // SÉCURITÉ : on n'envoie QUE pending.publicPem au serveur.
+        await publishKey(pending.publicPem);
+        publishedPem = pending.publicPem;
+        // On garde la clé privée en session pour pouvoir déchiffrer tout de suite.
+        await rememberPrivateKey(pending.privatePem);
+        pending = null;
+        $('generated').hidden = true;
+        showMessage('Clé publique publiée ✅ Les autres peuvent maintenant vous écrire.', 'success');
+        await refreshStatus();
+      } catch (err) {
+        $('btn-publish').disabled = false;
+        showMessage(`Publication impossible : ${err.message}`, 'error');
+      }
+    });
+
+    // ------------------ Réimporter un .pem ------------------
+    $('file-pem').addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        // Lecture du fichier DANS le navigateur (aucun envoi).
+        const pem = await file.text();
+        await rememberPrivateKey(pem); // lève une erreur si le fichier est invalide
+        await refreshStatus();
+        if (publishedPem && !(await privateKeyMatchesPublic(pem, publishedPem))) {
+          showMessage('Clé chargée, mais elle ne correspond pas à votre clé publiée : '
+            + 'les messages récents ne pourront pas être déchiffrés avec elle.', 'warning');
+        } else {
+          showMessage('Clé privée chargée ✅ Vous pouvez lire vos messages.', 'success');
+        }
+      } catch (err) {
+        showMessage(err.message, 'error');
+      } finally {
+        event.target.value = ''; // permet de recharger le même fichier
+      }
+    });
+
+    // ------------------ Oublier la clé ------------------
+    $('btn-forget').addEventListener('click', async () => {
+      forgetPrivateKey();
+      showMessage('Clé privée retirée de cet onglet.', 'success');
+      await refreshStatus();
+    });
+
+    // ------------------ Au chargement ------------------
+    if (user) {
+      try {
+        publishedPem = await getMyPublicKey();
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+      await refreshStatus();
+    }
+  </script>
+</body>
+</html>
