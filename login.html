@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connexion — ShopCrypt</title>
+  <!-- La feuille de style sera écrite à l'étape 10. -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Menu commun à toutes les pages -->
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html">Boutique</a>
+      <a href="keys.html">Mes clés</a>
+      <a href="write.html">Écrire</a>
+      <a href="inbox.html">Boîte de réception</a>
+      <a href="demo-rsa.html">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>Espace membre</h1>
+    <p class="intro">
+      Créez un compte (vendeur ou client), puis connectez-vous pour échanger
+      des messages confidentiels chiffrés avec RSA.
+    </p>
+
+    <!-- Zone où s'affichent les erreurs et confirmations -->
+    <p id="message" class="alert" role="status" hidden></p>
+
+    <div class="grid-2">
+      <!-- ===================== Inscription ===================== -->
+      <section class="card">
+        <h2>Créer un compte</h2>
+        <form id="form-register">
+          <label for="reg-username">Pseudo</label>
+          <!-- pattern : mêmes règles que le serveur (le serveur revérifie
+               toujours : la vérification du navigateur n'est qu'un confort) -->
+          <input id="reg-username" name="username" required minlength="3" maxlength="30"
+                 pattern="[a-zA-Z0-9_.\-]{3,30}" autocomplete="username"
+                 title="3 à 30 caractères : lettres, chiffres, . _ -">
+
+          <label for="reg-password">Mot de passe (8 caractères minimum)</label>
+          <input id="reg-password" name="password" type="password" required minlength="8"
+                 autocomplete="new-password">
+
+          <label for="reg-password2">Confirmer le mot de passe</label>
+          <input id="reg-password2" type="password" required minlength="8"
+                 autocomplete="new-password">
+
+          <button type="submit" class="btn">S'inscrire</button>
+        </form>
+      </section>
+
+      <!-- ===================== Connexion ===================== -->
+      <section class="card">
+        <h2>Se connecter</h2>
+        <form id="form-login">
+          <label for="log-username">Pseudo</label>
+          <input id="log-username" name="username" required autocomplete="username">
+
+          <label for="log-password">Mot de passe</label>
+          <input id="log-password" name="password" type="password" required
+                 autocomplete="current-password">
+
+          <button type="submit" class="btn">Se connecter</button>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    // On importe les fonctions dont la page a besoin depuis js/api.js.
+    import { register, login, getUser, initNav } from './js/api.js';
+
+    const messageZone = document.getElementById('message');
+
+    // Affiche un message (type = 'error' ou 'success').
+    function showMessage(text, type) {
+      messageZone.textContent = text; // textContent : anti-XSS
+      messageZone.className = `alert alert-${type}`;
+      messageZone.hidden = false;
+    }
+
+    // Après connexion : si l'utilisateur n'a pas encore de clé publique,
+    // on l'envoie générer sa paire de clés ; sinon vers sa boîte de réception.
+    function redirectAfterLogin(user) {
+      window.location.href = user.has_public_key ? 'inbox.html' : 'keys.html';
+    }
+
+    // Désactive le bouton pendant la requête (évite les doubles clics).
+    async function withButton(form, action) {
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        await action();
+      } catch (err) {
+        showMessage(err.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    // --------------------- Inscription ---------------------
+    const formRegister = document.getElementById('form-register');
+    formRegister.addEventListener('submit', (event) => {
+      event.preventDefault(); // empêche le rechargement de la page
+
+      const username = document.getElementById('reg-username').value.trim();
+      const password = document.getElementById('reg-password').value;
+      const password2 = document.getElementById('reg-password2').value;
+
+      if (password !== password2) {
+        showMessage('Les deux mots de passe ne sont pas identiques.', 'error');
+        return;
+      }
+
+      withButton(formRegister, async () => {
+        const user = await register(username, password);
+        showMessage(`Compte créé. Bienvenue ${user.username} !`, 'success');
+        redirectAfterLogin(user);
+      });
+    });
+
+    // --------------------- Connexion ---------------------
+    const formLogin = document.getElementById('form-login');
+    formLogin.addEventListener('submit', (event) => {
+      event.preventDefault();
+
+      const username = document.getElementById('log-username').value.trim();
+      const password = document.getElementById('log-password').value;
+
+      withButton(formLogin, async () => {
+        const user = await login(username, password);
+        showMessage(`Connecté en tant que ${user.username}.`, 'success');
+        redirectAfterLogin(user);
+      });
+    });
+
+    // --------------------- Au chargement ---------------------
+    initNav();
+    const current = getUser();
+    if (current) {
+      showMessage(`Vous êtes déjà connecté en tant que ${current.username}.`, 'success');
+    }
+  </script>
+</body>
+</html>
