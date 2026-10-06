@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Écrire un message — ShopCrypt</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="index.html" class="logo">🔐 ShopCrypt</a>
+    <nav>
+      <a href="index.html">Boutique</a>
+      <a href="keys.html">Mes clés</a>
+      <a href="write.html" aria-current="page">Écrire</a>
+      <a href="inbox.html">Boîte de réception</a>
+      <a href="demo-rsa.html">Démo RSA</a>
+      <span id="nav-user"></span>
+    </nav>
+  </header>
+
+  <main class="container">
+    <h1>Envoyer un message confidentiel</h1>
+    <p class="intro">
+      Le message est chiffré <strong>dans votre navigateur</strong> avec la clé publique du
+      destinataire. Le serveur ne reçoit que le texte chiffré : seul le destinataire,
+      avec sa clé privée, pourra le lire.
+    </p>
+
+    <p id="message" class="alert" role="status" hidden></p>
+
+    <section class="card">
+      <!-- 1. Choix du destinataire -->
+      <label for="recipient">1. Destinataire</label>
+      <select id="recipient">
+        <option value="">Chargement…</option>
+      </select>
+
+      <!-- 2. Message en clair -->
+      <label for="plaintext">2. Message (texte clair)</label>
+      <textarea id="plaintext" rows="5"
+                placeholder="Ex : Bonjour, votre commande n°42 est prête. Code de retrait : 7781"></textarea>
+      <!-- Compteur d'OCTETS (pas de caractères) : "é" compte 2, "😀" compte 4. -->
+      <p id="counter" class="counter">0 / 190 octets</p>
+
+      <!-- 3. Chiffrement -->
+      <button id="btn-encrypt" type="button" class="btn" disabled>3. Chiffrer</button>
+
+      <label for="ciphertext">Texte chiffré (base64) — c’est tout ce que le serveur verra :</label>
+      <textarea id="ciphertext" rows="6" readonly class="mono"
+                placeholder="Le message chiffré apparaîtra ici après avoir cliqué sur « Chiffrer »."></textarea>
+
+      <!-- 4. Envoi (actif seulement après chiffrement) -->
+      <button id="btn-send" type="button" class="btn" disabled>4. Envoyer</button>
+    </section>
+  </main>
+
+  <script type="module">
+    import { requireLogin, initNav, getUsers, sendMessage } from './js/api.js';
+    import { MAX_MESSAGE_BYTES, byteLength, importPublicKeyPem, encryptMessage } from './js/crypto.js';
+
+    const user = requireLogin();
+    initNav();
+
+    const $ = (id) => document.getElementById(id);
+    const select = $('recipient');
+    const plaintext = $('plaintext');
+    const counter = $('counter');
+    const ciphertextZone = $('ciphertext');
+    const btnEncrypt = $('btn-encrypt');
+    const btnSend = $('btn-send');
+    const messageZone = $('message');
+
+    // Destinataires reçus de l'API : id -> { username, public_key }
+    const recipients = new Map();
+
+    function showMessage(text, type) {
+      messageZone.textContent = text; // anti-XSS
+      messageZone.className = `alert alert-${type}`;
+      messageZone.hidden = false;
+    }
+
+    // Efface le chiffré : si le texte ou le destinataire change, l'ancien
+    // chiffré ne correspond plus => il faut rechiffrer avant d'envoyer.
+    function resetCiphertext() {
+      ciphertextZone.value = '';
+      btnSend.disabled = true;
+    }
+
+    // Met à jour le compteur et l'état du bouton "Chiffrer".
+    function updateCounter() {
+      // TextEncoder compte les OCTETS UTF-8 réellement chiffrés par RSA.
+      const bytes = byteLength(plaintext.value);
+      counter.textContent = `${bytes} / ${MAX_MESSAGE_BYTES} octets`;
+      const tooLong = bytes > MAX_MESSAGE_BYTES;
+      counter.classList.toggle('counter-over', tooLong);
+      if (tooLong) {
+        counter.textContent += ` — trop long de ${bytes - MAX_MESSAGE_BYTES} octet(s)`;
+      }
+      // "Chiffrer" actif seulement si : destinataire choisi, texte non vide, ≤ 190 octets.
+      btnEncrypt.disabled = !select.value || bytes === 0 || tooLong;
+    }
+
+    plaintext.addEventListener('input', () => { resetCiphertext(); updateCounter(); });
+    select.addEventListener('change', () => { resetCiphertext(); updateCounter(); });
+
+    // ------------------ Chiffrer ------------------
+    btnEncrypt.addEventListener('click', async () => {
+      const recipient = recipients.get(select.value);
+      if (!recipient) return;
+      btnEncrypt.disabled = true;
+      try {
+        // CRYPTO : on importe la clé PUBLIQUE du destinataire (SPKI/PEM)...
+        const publicKey = await importPublicKeyPem(recipient.public_key);
+        // ... et on chiffre en RSA-OAEP. Résultat : 344 caractères base64.
+        const encrypted = await encryptMessage(publicKey, plaintext.value);
+        ciphertextZone.value = encrypted;
+        btnSend.disabled = false; // l'envoi devient possible
+        showMessage(`Message chiffré pour ${recipient.username}. Vous pouvez l’envoyer.`, 'success');
+      } catch (err) {
+        showMessage(err.message, 'error');
+      } finally {
+        updateCounter();
+      }
+    });
+
+    // ------------------ Envoyer ------------------
+    btnSend.addEventListener('click', async () => {
+      const recipient = recipients.get(select.value);
+      const encrypted = ciphertextZone.value;
+      if (!recipient || !encrypted) return;
+      btnSend.disabled = true;
+      try {
+        // SÉCURITÉ : on envoie UNIQUEMENT le chiffré et l'id du destinataire.
+        // Le texte clair ne quitte jamais le navigateur.
+        await sendMessage(select.value, encrypted);
+        showMessage(`✅ Message chiffré envoyé à ${recipient.username}.`, 'success');
+        plaintext.value = '';
+        resetCiphertext();
+        updateCounter();
+      } catch (err) {
+        btnSend.disabled = false;
+        showMessage(`Envoi impossible : ${err.message}`, 'error');
+      }
+    });
+
+    // ------------------ Au chargement : liste des destinataires ------------------
+    async function loadRecipients() {
+      try {
+        const users = await getUsers();
+        select.textContent = '';
+        const placeholder = new Option(
+          users.length ? '— Choisir un destinataire —' : 'Aucun destinataire avec une clé publique', '');
+        select.add(placeholder);
+        for (const u of users) {
+          recipients.set(u.id, u);
+          // new Option(texte, valeur) : le pseudo est inséré comme texte (anti-XSS).
+          select.add(new Option(u.username, u.id));
+        }
+      } catch (err) {
+        showMessage(err.message, 'error');
+      }
+      updateCounter();
+    }
+
+    if (user) loadRecipients();
+  </script>
+</body>
+</html>
